@@ -24,6 +24,8 @@ const (
 	ETCDBRNextImageTag = "backup-restore-next-test-tag"
 	// InitContainerTag is the ImageSource tag for the init container image.
 	InitContainerTag = "init-container-test-tag"
+	// ETCDMetricsExporterImageTag is the ImageSource tag for the etcd-metrics-exporter image.
+	ETCDMetricsExporterImageTag = "etcd-metrics-exporter-test-tag"
 )
 
 // Secret names

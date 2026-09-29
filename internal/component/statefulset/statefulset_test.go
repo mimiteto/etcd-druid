@@ -420,8 +420,10 @@ func TestSyncWhenNoSTSExists(t *testing.T) {
 			cl := testutils.CreateTestFakeClientForObjects(nil, tc.createErr, nil, nil, []client.Object{buildBackupSecret()}, getObjectKey(etcd.ObjectMeta))
 			etcdImage, etcdBRImage, initContainerImage, err := utils.GetEtcdImages(etcd, iv)
 			g.Expect(err).ToNot(HaveOccurred())
+			etcdMetricsExporterImage, err := utils.GetEtcdMetricsExporterImage(iv)
+			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(tc.expectedReplicas).ToNot(BeNil())
-			stsMatcher := NewStatefulSetMatcher(g, cl, etcd, *tc.expectedReplicas, initContainerImage, etcdImage, etcdBRImage, ptr.To(druidstore.Local), tc.expectNoService)
+			stsMatcher := NewStatefulSetMatcher(g, cl, etcd, *tc.expectedReplicas, initContainerImage, etcdImage, etcdBRImage, *etcdMetricsExporterImage, ptr.To(druidstore.Local), tc.expectNoService)
 			operator := New(cl, iv)
 			// *************** Test and assert ***************
 			opCtx := component.NewOperatorContext(context.Background(), logr.Discard(), uuid.NewString())
@@ -503,5 +505,93 @@ func buildStatefulSetWithImage(objMeta metav1.ObjectMeta, replicas int32, image 
 		Status: appsv1.StatefulSetStatus{
 			Replicas: replicas,
 		},
+	}
+}
+
+// ----------------------------------- Metrics exporter container -----------------------------------
+func TestGetMetricsExporterContainer(t *testing.T) {
+	testCases := []struct {
+		name           string
+		clientTLS      bool
+		expectedScheme string
+	}{
+		{
+			name:           "without client URL TLS",
+			clientTLS:      false,
+			expectedScheme: "http",
+		},
+		{
+			name:           "with client URL TLS",
+			clientTLS:      true,
+			expectedScheme: "https",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			iv := testutils.CreateImageVector(true, true)
+			etcdBuilder := testutils.EtcdBuilderWithDefaults(testutils.TestEtcdName, testutils.TestNamespace).WithReplicas(1)
+			if tc.clientTLS {
+				etcdBuilder = etcdBuilder.WithClientTLS()
+			}
+			etcd := etcdBuilder.Build()
+
+			b, err := newStsBuilder(nil, logr.Discard(), etcd, 1, iv, true, &appsv1.StatefulSet{})
+			g.Expect(err).ToNot(HaveOccurred())
+
+			container := b.getMetricsExporterContainer()
+
+			// name, image and pull policy
+			g.Expect(container.Name).To(Equal(common.ContainerNameEtcdMetricsExporter))
+			expectedImage, err := utils.GetEtcdMetricsExporterImage(iv)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(container.Image).To(Equal(*expectedImage))
+			g.Expect(container.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
+			g.Expect(container.SecurityContext).ToNot(BeNil())
+			g.Expect(container.SecurityContext.AllowPrivilegeEscalation).ToNot(BeNil())
+			g.Expect(*container.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+
+			// port
+			g.Expect(container.Ports).To(ConsistOf(corev1.ContainerPort{
+				Name:          metricsExporterPortName,
+				Protocol:      corev1.ProtocolTCP,
+				ContainerPort: common.DefaultPortEtcdMetricsExporter,
+			}))
+
+			// args
+			g.Expect(container.Args).To(ContainElement(fmt.Sprintf("--metrics-port=%d", common.DefaultPortEtcdMetricsExporter)))
+			g.Expect(container.Args).To(ContainElement("--config-file=/var/etcd/config/etcd.conf.yaml"))
+			expectedEndpoint := fmt.Sprintf("--endpoint=%s://%s-local:%d", tc.expectedScheme, etcd.Name, ptr.Deref(etcd.Spec.Etcd.ClientPort, common.DefaultPortEtcdClient))
+			g.Expect(container.Args).To(ContainElement(expectedEndpoint))
+			if tc.clientTLS {
+				g.Expect(container.Args).To(ContainElement(fmt.Sprintf("--cacert=%s/ca.crt", common.VolumeMountPathEtcdCA)))
+				g.Expect(container.Args).To(ContainElement(fmt.Sprintf("--cert=%s/tls.crt", common.VolumeMountPathEtcdClientTLS)))
+				g.Expect(container.Args).To(ContainElement(fmt.Sprintf("--key=%s/tls.key", common.VolumeMountPathEtcdClientTLS)))
+				g.Expect(container.Args).To(ContainElement("--insecure-transport=false"))
+				g.Expect(container.Args).To(ContainElement("--insecure-skip-tls-verify=false"))
+			} else {
+				g.Expect(container.Args).To(ContainElement("--insecure-transport=true"))
+				g.Expect(container.Args).To(ContainElement("--insecure-skip-tls-verify=true"))
+			}
+
+			// volume mounts
+			g.Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      common.VolumeNameEtcdConfig,
+				MountPath: etcdConfigFileMountPath,
+			}))
+			if tc.clientTLS {
+				g.Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+					Name:      common.VolumeNameEtcdCA,
+					MountPath: common.VolumeMountPathEtcdCA,
+				}))
+				g.Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+					Name:      common.VolumeNameEtcdClientTLS,
+					MountPath: common.VolumeMountPathEtcdClientTLS,
+				}))
+			} else {
+				g.Expect(container.VolumeMounts).To(HaveLen(1))
+			}
+		})
 	}
 }

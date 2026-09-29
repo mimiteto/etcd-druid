@@ -38,19 +38,21 @@ var (
 
 // StatefulSetMatcher is the type used for matching StatefulSets. It holds relevant information required for matching.
 type StatefulSetMatcher struct {
-	g                  *WithT
-	cl                 client.Client
-	etcd               *druidv1alpha1.Etcd
-	initContainerImage string
-	etcdImage          string
-	etcdBRImage        string
-	provider           *string
-	clientPort         int32
-	serverPort         int32
-	backupPort         int32
-	wrapperPort        int32
-	expectedReplicas   int32
-	expectNoService    bool
+	g                        *WithT
+	cl                       client.Client
+	etcd                     *druidv1alpha1.Etcd
+	initContainerImage       string
+	etcdImage                string
+	etcdBRImage              string
+	etcdMetricsExporterImage string
+	provider                 *string
+	clientPort               int32
+	serverPort               int32
+	backupPort               int32
+	wrapperPort              int32
+	metricsExporterPort      int32
+	expectedReplicas         int32
+	expectNoService          bool
 }
 
 // NewStatefulSetMatcher constructs a new instance of StatefulSetMatcher.
@@ -58,23 +60,25 @@ func NewStatefulSetMatcher(g *WithT,
 	cl client.Client,
 	etcd *druidv1alpha1.Etcd,
 	replicas int32,
-	initContainerImage, etcdImage, etcdBRImage string,
+	initContainerImage, etcdImage, etcdBRImage, etcdMetricsExporterImage string,
 	provider *string,
 	expectNoService bool) StatefulSetMatcher {
 	return StatefulSetMatcher{
-		g:                  g,
-		cl:                 cl,
-		etcd:               etcd,
-		initContainerImage: initContainerImage,
-		etcdImage:          etcdImage,
-		etcdBRImage:        etcdBRImage,
-		provider:           provider,
-		clientPort:         ptr.Deref(etcd.Spec.Etcd.ClientPort, 2379),
-		serverPort:         ptr.Deref(etcd.Spec.Etcd.ServerPort, 2380),
-		backupPort:         ptr.Deref(etcd.Spec.Backup.Port, 8080),
-		wrapperPort:        ptr.Deref(etcd.Spec.Etcd.WrapperPort, 9095),
-		expectedReplicas:   replicas,
-		expectNoService:    expectNoService,
+		g:                        g,
+		cl:                       cl,
+		etcd:                     etcd,
+		initContainerImage:       initContainerImage,
+		etcdImage:                etcdImage,
+		etcdBRImage:              etcdBRImage,
+		etcdMetricsExporterImage: etcdMetricsExporterImage,
+		provider:                 provider,
+		clientPort:               ptr.Deref(etcd.Spec.Etcd.ClientPort, 2379),
+		serverPort:               ptr.Deref(etcd.Spec.Etcd.ServerPort, 2380),
+		backupPort:               ptr.Deref(etcd.Spec.Backup.Port, 8080),
+		wrapperPort:              ptr.Deref(etcd.Spec.Etcd.WrapperPort, 9095),
+		metricsExporterPort:      common.DefaultPortEtcdMetricsExporter,
+		expectedReplicas:         replicas,
+		expectNoService:          expectNoService,
 	}
 }
 
@@ -187,9 +191,61 @@ func (s StatefulSetMatcher) matchPodInitContainers() gomegatypes.GomegaMatcher {
 
 func (s StatefulSetMatcher) matchContainers() gomegatypes.GomegaMatcher {
 	return MatchAllElements(containerIdentifier, Elements{
-		common.ContainerNameEtcd:              s.matchEtcdContainer(),
-		common.ContainerNameEtcdBackupRestore: s.matchBackupRestoreContainer(),
+		common.ContainerNameEtcd:                s.matchEtcdContainer(),
+		common.ContainerNameEtcdBackupRestore:   s.matchBackupRestoreContainer(),
+		common.ContainerNameEtcdMetricsExporter: s.matchMetricsExporterContainer(),
 	})
+}
+
+func (s StatefulSetMatcher) matchMetricsExporterContainer() gomegatypes.GomegaMatcher {
+	return MatchFields(IgnoreExtras, Fields{
+		"Name":            Equal(common.ContainerNameEtcdMetricsExporter),
+		"Image":           Equal(s.etcdMetricsExporterImage),
+		"ImagePullPolicy": Equal(corev1.PullIfNotPresent),
+		"Args":            s.matchMetricsExporterContainerCmdArgs(),
+		"Ports": ConsistOf(
+			MatchFields(IgnoreExtras, Fields{
+				"Name":          Equal(metricsExporterPortName),
+				"Protocol":      Equal(corev1.ProtocolTCP),
+				"ContainerPort": Equal(s.metricsExporterPort),
+			}),
+		),
+		"Resources": Equal(defaultTestContainerResources),
+		"SecurityContext": PointTo(MatchFields(IgnoreExtras|IgnoreMissing, Fields{
+			"AllowPrivilegeEscalation": PointTo(Equal(false)),
+		})),
+		"VolumeMounts": s.matchMetricsExporterContainerVolMounts(),
+	})
+}
+
+func (s StatefulSetMatcher) matchMetricsExporterContainerCmdArgs() gomegatypes.GomegaMatcher {
+	cmdArgs := make([]string, 0, 8)
+	cmdArgs = append(cmdArgs, fmt.Sprintf("--metrics-port=%d", s.metricsExporterPort))
+	cmdArgs = append(cmdArgs, fmt.Sprintf("--config-file=%s%s", etcdConfigFileMountPath, common.EtcdConfigFileName))
+	if s.etcd.Spec.Etcd.ClientUrlTLS != nil {
+		caDataKey := ptr.Deref(s.etcd.Spec.Etcd.ClientUrlTLS.TLSCASecretRef.DataKey, "ca.crt")
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--cacert=%s/%s", common.VolumeMountPathEtcdCA, caDataKey))
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--cert=%s/tls.crt", common.VolumeMountPathEtcdClientTLS))
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--key=%s/tls.key", common.VolumeMountPathEtcdClientTLS))
+		cmdArgs = append(cmdArgs, "--insecure-transport=false")
+		cmdArgs = append(cmdArgs, "--insecure-skip-tls-verify=false")
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--endpoint=https://%s-local:%d", s.etcd.Name, s.clientPort))
+	} else {
+		cmdArgs = append(cmdArgs, "--insecure-transport=true")
+		cmdArgs = append(cmdArgs, "--insecure-skip-tls-verify=true")
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--endpoint=http://%s-local:%d", s.etcd.Name, s.clientPort))
+	}
+	return HaveExactElements(cmdArgs)
+}
+
+func (s StatefulSetMatcher) matchMetricsExporterContainerVolMounts() gomegatypes.GomegaMatcher {
+	volMountMatchers := make([]gomegatypes.GomegaMatcher, 0, 3)
+	volMountMatchers = append(volMountMatchers, matchVolMount(common.VolumeNameEtcdConfig, etcdConfigFileMountPath))
+	if s.etcd.Spec.Etcd.ClientUrlTLS != nil {
+		volMountMatchers = append(volMountMatchers, matchVolMount(common.VolumeNameEtcdCA, common.VolumeMountPathEtcdCA))
+		volMountMatchers = append(volMountMatchers, matchVolMount(common.VolumeNameEtcdClientTLS, common.VolumeMountPathEtcdClientTLS))
+	}
+	return ConsistOf(volMountMatchers)
 }
 
 func (s StatefulSetMatcher) matchEtcdContainer() gomegatypes.GomegaMatcher {

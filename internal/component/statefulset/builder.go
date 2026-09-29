@@ -57,20 +57,22 @@ var (
 )
 
 type stsBuilder struct {
-	client                 client.Client
-	etcd                   *druidv1alpha1.Etcd
-	replicas               int32
-	provider               *string
-	etcdImage              string
-	etcdBackupRestoreImage string
-	initContainerImage     string
-	sts                    *appsv1.StatefulSet
-	logger                 logr.Logger
+	client                   client.Client
+	etcd                     *druidv1alpha1.Etcd
+	replicas                 int32
+	provider                 *string
+	etcdImage                string
+	etcdBackupRestoreImage   string
+	initContainerImage       string
+	etcdMetricsExporterImage string
+	sts                      *appsv1.StatefulSet
+	logger                   logr.Logger
 
-	clientPort  int32
-	serverPort  int32
-	backupPort  int32
-	wrapperPort int32
+	clientPort          int32
+	serverPort          int32
+	backupPort          int32
+	wrapperPort         int32
+	metricsExporterPort int32
 	// skipSetOrUpdateForbiddenFields if its true then it will set/update values to fields which are forbidden to be updated for an existing StatefulSet.
 	// Updates to statefulset spec for fields other than 'replicas', 'ordinals', 'template', 'updateStrategy', 'persistentVolumeClaimRetentionPolicy' and 'minReadySeconds' are forbidden.
 	// Only for a new StatefulSet should this be set to true.
@@ -88,6 +90,10 @@ func newStsBuilder(client client.Client,
 	if err != nil {
 		return nil, err
 	}
+	etcdMetricsExporterImage, err := utils.GetEtcdMetricsExporterImage(imageVector)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := kubernetes.GetBackupStoreProvider(etcd)
 	if err != nil {
 		return nil, err
@@ -101,11 +107,13 @@ func newStsBuilder(client client.Client,
 		etcdImage:                      etcdImage,
 		etcdBackupRestoreImage:         etcdBackupRestoreImage,
 		initContainerImage:             initContainerImage,
+		etcdMetricsExporterImage:       *etcdMetricsExporterImage,
 		sts:                            sts,
 		clientPort:                     ptr.Deref(etcd.Spec.Etcd.ClientPort, common.DefaultPortEtcdClient),
 		serverPort:                     ptr.Deref(etcd.Spec.Etcd.ServerPort, common.DefaultPortEtcdPeer),
 		backupPort:                     ptr.Deref(etcd.Spec.Backup.Port, common.DefaultPortEtcdBackupRestore),
 		wrapperPort:                    ptr.Deref(etcd.Spec.Etcd.WrapperPort, common.DefaultPortEtcdWrapper),
+		metricsExporterPort:            common.DefaultPortEtcdMetricsExporter,
 		skipSetOrUpdateForbiddenFields: skipSetOrUpdateForbiddenFields,
 	}, nil
 }
@@ -174,6 +182,7 @@ func (b *stsBuilder) createPodTemplateSpec(ctx component.OperatorContext) error 
 			Containers: []corev1.Container{
 				b.getEtcdContainer(),
 				backupRestoreContainer,
+				b.getMetricsExporterContainer(),
 			},
 			SecurityContext:           b.getPodSecurityContext(),
 			Affinity:                  b.etcd.Spec.SchedulingConstraints.Affinity,
@@ -424,6 +433,71 @@ func (b *stsBuilder) getBackupRestoreContainer() (corev1.Container, error) {
 		},
 		VolumeMounts: b.getBackupRestoreContainerVolumeMounts(),
 	}, nil
+}
+
+func (b *stsBuilder) getMetricsExporterContainer() corev1.Container {
+	return corev1.Container{
+		Name:            common.ContainerNameEtcdMetricsExporter,
+		Image:           b.etcdMetricsExporterImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            b.getMetricsExporterContainerCommandArgs(),
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          metricsExporterPortName,
+				Protocol:      corev1.ProtocolTCP,
+				ContainerPort: b.metricsExporterPort,
+			},
+		},
+		Resources: defaultResourceRequirements,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+		},
+		VolumeMounts: b.getMetricsExporterContainerVolumeMounts(),
+	}
+}
+
+func (b *stsBuilder) getMetricsExporterContainerCommandArgs() []string {
+	commandArgs := []string{
+		fmt.Sprintf("--metrics-port=%d", b.metricsExporterPort),
+		// etcdConfigFileMountPath already ends with a trailing slash, so join without an additional separator to avoid a double slash.
+		fmt.Sprintf("--config-file=%s%s", etcdConfigFileMountPath, common.EtcdConfigFileName),
+	}
+	if b.etcd.Spec.Etcd.ClientUrlTLS != nil {
+		caDataKey := ptr.Deref(b.etcd.Spec.Etcd.ClientUrlTLS.TLSCASecretRef.DataKey, "ca.crt")
+		commandArgs = append(commandArgs, fmt.Sprintf("--cacert=%s/%s", common.VolumeMountPathEtcdCA, caDataKey))
+		commandArgs = append(commandArgs, fmt.Sprintf("--cert=%s/tls.crt", common.VolumeMountPathEtcdClientTLS))
+		commandArgs = append(commandArgs, fmt.Sprintf("--key=%s/tls.key", common.VolumeMountPathEtcdClientTLS))
+		commandArgs = append(commandArgs, "--insecure-transport=false")
+		commandArgs = append(commandArgs, "--insecure-skip-tls-verify=false")
+		commandArgs = append(commandArgs, fmt.Sprintf("--endpoint=https://%s-local:%d", b.etcd.Name, b.clientPort))
+	} else {
+		commandArgs = append(commandArgs, "--insecure-transport=true")
+		commandArgs = append(commandArgs, "--insecure-skip-tls-verify=true")
+		commandArgs = append(commandArgs, fmt.Sprintf("--endpoint=http://%s-local:%d", b.etcd.Name, b.clientPort))
+	}
+	return commandArgs
+}
+
+func (b *stsBuilder) getMetricsExporterContainerVolumeMounts() []corev1.VolumeMount {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      common.VolumeNameEtcdConfig,
+			MountPath: etcdConfigFileMountPath,
+		},
+	}
+	if b.etcd.Spec.Etcd.ClientUrlTLS != nil {
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{
+				Name:      common.VolumeNameEtcdCA,
+				MountPath: common.VolumeMountPathEtcdCA,
+			},
+			corev1.VolumeMount{
+				Name:      common.VolumeNameEtcdClientTLS,
+				MountPath: common.VolumeMountPathEtcdClientTLS,
+			},
+		)
+	}
+	return volumeMounts
 }
 
 func (b *stsBuilder) getBackupRestoreContainerCommandArgs() []string {
