@@ -328,6 +328,12 @@ func matchClientService(g *WithT, etcd *druidv1alpha1.Etcd, actualSvc corev1.Ser
 					Port:       backupPort,
 					TargetPort: intstr.FromInt(int(backupPort)),
 				}),
+				Equal(corev1.ServicePort{
+					Name:       "metrics",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       common.DefaultPortEtcdMetricsExporter,
+					TargetPort: intstr.FromInt(int(common.DefaultPortEtcdMetricsExporter)),
+				}),
 			),
 			"TrafficDistribution": Equal(expectedTrafficDistribution),
 		}),

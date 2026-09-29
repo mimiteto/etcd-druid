@@ -8,7 +8,7 @@ For every `Etcd` cluster that is provisioned by `etcd-druid` it deploys a set of
 
 * Replicas for the StatefulSet are derived from `Etcd.Spec.Replicas` in the custom resource.
 
-* Each pod comprises two containers:
+* Each pod comprises three containers:
   * `etcd-wrapper` : This is the main container which runs an etcd process.
   
   * `etcd-backup-restore` : This is a side-container which does the following:
@@ -19,6 +19,8 @@ For every `Etcd` cluster that is provisioned by `etcd-druid` it deploys a set of
     * Orchestrates scheduled etcd-db defragmentation.
 
     > NOTE: This is not a complete list of functionalities offered out of `etcd-backup-restore`. 
+
+  * `etcd-metrics-exporter` : This is a side-container which connects to the local etcd and exposes Prometheus metrics (resource event counts and the configured backend quota) on port `9096`, complementing the metrics that etcd itself exposes.
 
 **Code reference:** [StatefulSet-Component](https://github.com/gardener/etcd-druid/tree/480213808813c5282b19aff5f3fd6868529e779c/internal/component/statefulset)
 

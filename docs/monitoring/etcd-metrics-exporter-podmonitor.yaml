@@ -1,0 +1,64 @@
+# EXAMPLE ONLY — this manifest is NOT applied by etcd-druid.
+# etcd-druid does not ship or reconcile any monitoring custom resources; scraping
+# is left to the monitoring platform. This is a ready-to-adapt example of a
+# prometheus-operator PodMonitor that a platform operator can apply after minimal
+# edits (namespace selection, TLS secret names). It requires the prometheus-operator
+# CRDs (monitoring.coreos.com/v1) to be installed in the cluster.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: etcd-metrics
+  # Set this to the namespace where you want the PodMonitor to live. Depending on
+  # your Prometheus setup it may need matching labels to be selected by a Prometheus.
+  # namespace: monitoring
+  labels:
+    # Add whatever labels your Prometheus instance's podMonitorSelector matches.
+    app.kubernetes.io/part-of: etcd-druid
+spec:
+  # Select the namespace(s) in which the etcd pods run. Adjust as needed.
+  namespaceSelector:
+    any: true
+  # Selector on the STABLE labels that every etcd pod managed by etcd-druid carries.
+  # These labels are set on the StatefulSet pod template by etcd-druid and are reliable.
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: etcd-druid
+      app.kubernetes.io/component: etcd-statefulset
+      # To narrow this PodMonitor to a SINGLE Etcd cluster, add its name via the
+      # app-name label (equals the Etcd resource name), e.g.:
+      #   app.kubernetes.io/name: <etcd-name>
+      # or the part-of label which also equals the Etcd name:
+      #   app.kubernetes.io/part-of: <etcd-name>
+  podMetricsEndpoints:
+    # (1) etcd-metrics-exporter sidecar — plain HTTP on port 9096, path /metrics.
+    # This exposes the druid exporter metrics:
+    #   etcddruid_exporter_resource_events_total{resource,event_type}
+    #   etcddruid_exporter_configured_quota_backend_bytes
+    - port: metrics
+      path: /metrics
+      scheme: http
+    # (2) etcd's OWN native metrics on the client port 2379, path /metrics.
+    # When client TLS is enabled (the default for etcd-druid managed clusters),
+    # the client port serves HTTPS, so a scheme + tlsConfig are required.
+    - port: client
+      path: /metrics
+      scheme: https
+      # The tlsConfig below is a PLACEHOLDER — secret names vary per environment.
+      # The scraping Prometheus must be given the etcd CA (and optionally a client
+      # cert if the etcd requires client auth). Reference the etcd CA secret that
+      # etcd-druid provisions for the cluster, and uncomment/adjust as needed.
+      tlsConfig:
+        # insecureSkipVerify: true  # quick start only; prefer providing the CA below.
+        ca:
+          secret:
+            name: REPLACE_WITH_ETCD_CA_SECRET
+            key: ca.crt
+        # cert:
+        #   secret:
+        #     name: <etcd-client-cert-secret-name>
+        #     key: tls.crt
+        # keySecret:
+        #   name: <etcd-client-cert-secret-name>
+        #   key: tls.key
+        # serverName must match the etcd server certificate SAN if verification is on.
+        # serverName: <etcd-server-name>

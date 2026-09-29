@@ -75,6 +75,33 @@ The following list metrics is applicable to clustering of a multi-node etcd clus
 | 7.  | etcdbr_member_promote_duration_seconds  | total latency distribution of promoting the learner to the voting member.         |
 | 8.  | etcdbr_defragmentation_duration_seconds | total latency distribution of defragmentation of each etcd cluster member.        |
 
+## Etcd Metrics Exporter
+
+These metrics are exposed by the [etcd-metrics-exporter](https://github.com/gardener/etcd-druid) sidecar container that runs in each etcd pod. The sidecar exists so that operators do not have to manually run `etcdctl endpoint status` / `etcdctl watch` against a live member to debug database size, configured quota, or event churn — it surfaces this information as scrapeable Prometheus metrics instead.
+
+The sidecar listens on port `9096` and serves its metrics at `/metrics` over plain HTTP (no TLS).
+
+| No. | Metrics Name                                      | Description                                                                                       |
+| --- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 1.  | etcddruid_exporter_resource_events_total          | Total number of watch events observed, counted per resource and event type.                       |
+| 2.  | etcddruid_exporter_configured_quota_backend_bytes | The quota-backend-bytes value configured in the etcd config file (the configured DB size limit).  |
+
+`etcddruid_exporter_resource_events_total` is a counter and carries two labels: `resource` indicates the resource being watched and `event_type` indicates the kind of watch event observed. `etcddruid_exporter_configured_quota_backend_bytes` is a gauge and has no labels.
+
+### Configured-vs-runtime quota and defragmentable space
+
+`etcddruid_exporter_configured_quota_backend_bytes` reports the **configured** quota, i.e. the value read from the etcd configuration file. This is intentionally distinct from the **runtime** view, which comes from etcd's OWN native metrics on the client port (`2379`):
+
+- `etcd_server_quota_backend_bytes` — the quota the running etcd process is actually enforcing.
+- `etcd_mvcc_db_total_size_in_bytes` — total size physically allocated by the backend database.
+- `etcd_mvcc_db_total_size_in_use_in_bytes` — size actually in use.
+
+The **defragmentable space** is derived from etcd's native metrics as `etcd_mvcc_db_total_size_in_bytes - etcd_mvcc_db_total_size_in_use_in_bytes`. Exposing the configured quota alongside the runtime quota lets a dashboard highlight configured-vs-runtime drift (for example when the config file and the running process disagree).
+
+### Scraping the metrics
+
+Both the sidecar metrics (port `9096`, HTTP) and etcd's native metrics (port `2379`, HTTPS when client TLS is enabled) are reachable via the etcd client `Service`, which exposes a `metrics` port for the sidecar. etcd-druid does not ship or reconcile any monitoring custom resources — scraping is left to the monitoring platform. An example `PodMonitor` (prometheus-operator) that scrapes both endpoints is provided at [`etcd-metrics-exporter-podmonitor.yaml`](./etcd-metrics-exporter-podmonitor.yaml); it is an example only and is not applied by druid.
+
 ## Prometheus supplied metrics
 
 The Prometheus client library provides a number of metrics under the `go` and `process` namespaces.

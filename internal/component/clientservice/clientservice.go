@@ -187,5 +187,11 @@ func getPorts(etcd *druidv1alpha1.Etcd) []corev1.ServicePort {
 			Port:       backupPort,
 			TargetPort: intstr.FromInt(int(backupPort)),
 		},
+		{
+			Name:       "metrics",
+			Protocol:   corev1.ProtocolTCP,
+			Port:       common.DefaultPortEtcdMetricsExporter,
+			TargetPort: intstr.FromInt(int(common.DefaultPortEtcdMetricsExporter)),
+		},
 	}
 }
