@@ -19,6 +19,20 @@ build:
         ldflags:
           - '{{.LD_FLAGS}}'
         main: ./cmd
+    - image: local-skaffold/etcd-metrics-exporter
+      ko:
+        dependencies:
+          paths:
+            - api/core/v1alpha1
+            - api/config/v1alpha1
+            - cmd
+            - internal
+            - VERSION
+        flags:
+          - -v
+        ldflags:
+          - '{{.LD_FLAGS}}'
+        main: ./cmd/etcd-metrics-exporter
 deploy:
   helm:
     releases:

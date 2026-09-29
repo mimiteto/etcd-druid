@@ -67,3 +67,8 @@ func GetEtcdBackupRestoreImage(iv imagevector.ImageVector) (*string, error) {
 func GetInitContainerImage(iv imagevector.ImageVector) (*string, error) {
 	return chooseImage(common.ImageKeyAlpine, nil, iv)
 }
+
+// GetEtcdMetricsExporterImage returns the image for the etcd-metrics-exporter sidecar from the given image vector.
+func GetEtcdMetricsExporterImage(iv imagevector.ImageVector) (*string, error) {
+	return chooseImage(common.ImageKeyEtcdMetricsExporter, nil, iv)
+}

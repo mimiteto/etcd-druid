@@ -6,7 +6,14 @@ FROM golang:1.26.5 AS builder
 WORKDIR /go/src/github.com/gardener/etcd-druid
 COPY . .
 
-RUN make build
+RUN make build-all
+
+# Use distroless as minimal base image to package the etcd-metrics-exporter binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM gcr.io/distroless/static-debian12:nonroot AS etcd-metrics-exporter
+WORKDIR /
+COPY --from=builder /go/src/github.com/gardener/etcd-druid/bin/etcd-metrics-exporter /etcd-metrics-exporter
+ENTRYPOINT ["/etcd-metrics-exporter"]
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details

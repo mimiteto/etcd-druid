@@ -47,6 +47,18 @@ jobs:
                 confidentiality_requirement: high
                 integrity_requirement: high
                 availability_requirement: low
+          - name: etcd-metrics-exporter
+            target: etcd-metrics-exporter
+            oci-repository: gardener/etcd-metrics-exporter
+            ocm-labels:
+              name: gardener.cloud/cve-categorisation
+              value:
+                network_exposure: private
+                authentication_enforced: false
+                user_interaction: gardener-operator
+                confidentiality_requirement: high
+                integrity_requirement: high
+                availability_requirement: low
     with:
       name: ${{ matrix.args.name }}
       version: ${{ needs.prepare.outputs.version }}

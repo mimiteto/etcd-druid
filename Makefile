@@ -187,6 +187,19 @@ build:
 		-ldflags "$$(bash -c 'source $(HACK_DIR)/ld-flags.sh && build_ld_flags')" \
 		cmd/main.go
 
+# Build etcd-metrics-exporter binary
+.PHONY: build-metrics-exporter
+build-metrics-exporter:
+	@GO111MODULE=on CGO_ENABLED=0 go build \
+		-v \
+		-o bin/etcd-metrics-exporter \
+		-ldflags "$$(bash -c 'source $(HACK_DIR)/ld-flags.sh && build_ld_flags')" \
+		cmd/etcd-metrics-exporter/main.go
+
+# Build all binaries
+.PHONY: build-all
+build-all: build build-metrics-exporter
+
 # Clean go build cache
 .PHONY: clean-build-cache
 clean-build-cache:

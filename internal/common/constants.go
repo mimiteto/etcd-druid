@@ -32,6 +32,8 @@ const (
 	ImageKeyEtcdWrapperNext = "etcd-wrapper-next"
 	// ImageKeyEtcdBackupRestoreNext is the key for the next etcd-backup-restore image (etcd 3.5) in the image vector.
 	ImageKeyEtcdBackupRestoreNext = "etcd-backup-restore-next"
+	// ImageKeyEtcdMetricsExporter is the key for the etcd-metrics-exporter image in the image vector.
+	ImageKeyEtcdMetricsExporter = "etcd-metrics-exporter"
 )
 
 // Constants for container names
@@ -40,6 +42,8 @@ const (
 	ContainerNameEtcd = "etcd"
 	// ContainerNameEtcdBackupRestore is the name of the backup-restore container.
 	ContainerNameEtcdBackupRestore = "backup-restore"
+	// ContainerNameEtcdMetricsExporter is the name of the etcd-metrics-exporter container.
+	ContainerNameEtcdMetricsExporter = "metrics-exporter"
 	// InitContainerNameChangePermissions is the name of the change permissions init container.
 	InitContainerNameChangePermissions = "change-permissions"
 	// InitContainerNameChangeBackupBucketPermissions is the name of the change backup bucket permissions init container.
@@ -56,6 +60,8 @@ const (
 	DefaultPortEtcdWrapper int32 = 9095
 	// DefaultPortEtcdBackupRestore is the default port for the HTTP server in the etcd-backup-restore container.
 	DefaultPortEtcdBackupRestore int32 = 8080
+	// DefaultPortEtcdMetricsExporter is the default port for the HTTP server in the etcd-metrics-exporter container.
+	DefaultPortEtcdMetricsExporter int32 = 9096
 )
 
 // Constants for environment variables
