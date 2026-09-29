@@ -102,6 +102,8 @@ The **defragmentable space** is derived from etcd's native metrics as `etcd_mvcc
 
 Both the sidecar metrics (port `9096`, HTTP) and etcd's native metrics (port `2379`, HTTPS when client TLS is enabled) are reachable via the etcd client `Service`, which exposes a `metrics` port for the sidecar. etcd-druid does not ship or reconcile any monitoring custom resources — scraping is left to the monitoring platform. An example `PodMonitor` (prometheus-operator) that scrapes both endpoints is provided at [`etcd-metrics-exporter-podmonitor.yaml`](./etcd-metrics-exporter-podmonitor.yaml); it is an example only and is not applied by druid.
 
+An example Grafana dashboard that visualizes these signals (defragmentable space %, configured-vs-runtime quota drift, and per-resource event churn) is provided at [`etcd-metrics-exporter-dashboard.json`](./etcd-metrics-exporter-dashboard.json); import it via Grafana's "Import > paste JSON"; it is an example only and is not applied by druid.
+
 ## Prometheus supplied metrics
 
 The Prometheus client library provides a number of metrics under the `go` and `process` namespaces.
